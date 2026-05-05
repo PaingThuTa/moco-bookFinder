@@ -2,9 +2,9 @@
 
 ## Prerequisites
 
-- Go 1.21+ installed locally
 - A Telegram account
-- A free Railway, Fly.io, or Render account for hosting
+- A GitHub account
+- A free Render account (no credit card needed)
 
 ---
 
@@ -27,142 +27,104 @@
 ## Step 3: Local Development
 
 ```bash
-# Clone and enter the project
 cd book-finder
 
 # Set environment variables
 export TELEGRAM_BOT_TOKEN="your-bot-token-from-botfather"
 export ALLOWED_USER_IDS="your-user-id"
 
-# Run the bot
+# Run in polling mode (no WEBHOOK_URL = polling)
 go run ./cmd/bot/
 ```
 
-You should see: `Authorized on account your_bot_username`
+You should see: `Running in polling mode` and `Authorized on account your_bot_username`
 
-The bot is now running locally. Test it by sending messages on Telegram.
-
-## Step 4: Test the Bot
-
-In Telegram, message your bot:
+## Step 4: Test Locally
 
 ```
-/start          → Welcome message with usage instructions
-/search clean code              → Search for "Clean Code"
-/search clean code --author robert martin  → Search with author filter
+/start          → Welcome message
+/search clean code  → Search for books
 ```
 
-When results appear, tap a "Download" button to get the direct link.
+Tap **Send File** to get the file directly, or **Get Link** for the download URL.
 
-## Step 5: Deploy to Railway (Recommended — Easiest)
-
-1. Push your code to GitHub:
-   ```bash
-   git remote add origin https://github.com/yourusername/book-finder.git
-   git push -u origin main
-   ```
-
-2. Go to [railway.app](https://railway.app) and sign in with GitHub
-
-3. Click **New Project** → **Deploy from GitHub repo**
-
-4. Select the `book-finder` repository
-
-5. Go to **Variables** tab and add:
-   ```
-   TELEGRAM_BOT_TOKEN=your-bot-token
-   ALLOWED_USER_IDS=your-user-id
-   ```
-
-6. Railway auto-detects Go and builds. No `Procfile` or config needed — the entry point is `cmd/bot/main.go`.
-
-7. Railway may need a `Procfile` to know which binary to run. If so, create one:
-   ```
-   worker: ./bot
-   ```
-   And a simple `Dockerfile`:
-   ```dockerfile
-   FROM golang:1.23-alpine AS builder
-   WORKDIR /app
-   COPY . .
-   RUN go build -o bot ./cmd/bot/
-
-   FROM alpine:latest
-   COPY --from=builder /app/bot .
-   CMD ["./bot"]
-   ```
-
-8. Once deployed, Railway shows a deployment URL — the bot uses long polling, so **no URL configuration needed**. It just works.
-
-## Step 6: Deploy to Fly.io (Alternative)
+## Step 5: Push to GitHub
 
 ```bash
-# Install fly CLI
-brew install flyctl
-
-# Login
-fly auth login
-
-# Initialize app
-fly launch --name book-finder-bot
-
-# Add secrets
-fly secrets set TELEGRAM_BOT_TOKEN="your-token" ALLOWED_USER_IDS="your-id"
-
-# Deploy
-fly deploy
+git remote add origin https://github.com/yourusername/book-finder.git
+git push -u origin main
 ```
 
-Fly.io auto-detects Go. If needed, it generates a `Dockerfile` automatically.
+## Step 6: Deploy to Render (Free, No Credit Card)
 
-## Step 7: Deploy to Render (Alternative)
+1. Go to [render.com](https://render.com) and sign up (GitHub login)
 
-1. Go to [render.com](https://render.com) and sign in
+2. Click **New +** → **Web Service**
 
-2. Click **New** → **Web Service**
+3. Connect your GitHub account and select the `book-finder` repo
 
-3. Connect your GitHub repo
+4. Configure the service:
+   - **Name**: `book-finder-bot`
+   - **Branch**: `main`
+   - **Environment**: Docker
+   - **Plan**: Free
 
-4. Settings:
-   - **Build Command**: `go build -o bot ./cmd/bot/`
-   - **Start Command**: `./bot`
-   - **Environment Variables**: Add `TELEGRAM_BOT_TOKEN` and `ALLOWED_USER_IDS`
+5. Add **Environment Variables**:
+   ```
+   TELEGRAM_BOT_TOKEN=your-bot-token-from-botfather
+   ALLOWED_USER_IDS=your-user-id
+   WEBHOOK_URL=https://your-service-name.onrender.com
+   PORT=10000
+   ```
+   Replace `your-service-name` with the Render subdomain you'll get after creation (you can set this after the first deploy).
 
-5. Click **Create Web Service**
+6. Click **Create Web Service**
 
----
+### Step 6a: Set the Webhook URL
+
+After the first deploy, Render gives you a URL like `https://book-finder-bot-abc123.onrender.com`.
+
+Go to the **Environment** tab on Render and set `WEBHOOK_URL` to that URL. The service will redeploy.
+
+> **Important**: The `WEBHOOK_URL` must exactly match the Render URL (with trailing slash removed). The bot will automatically register the Telegram webhook endpoint at `/<bot-username>`.
+
+## How It Works
+
+| Mode | Trigger | When to Use |
+|------|---------|-------------|
+| **Polling** | Bot polls Telegram for updates | Local development |
+| **Webhook** | Telegram sends HTTP POST to your server | Deployed on Render/any web host |
+
+The bot auto-detects the mode: if `WEBHOOK_URL` is set, it runs in webhook mode. Otherwise, polling.
 
 ## Managing Allowed Users
 
-To add or remove users, update the `ALLOWED_USER_IDS` environment variable on your hosting platform:
+To add or remove users, update `ALLOWED_USER_IDS` on Render's Environment tab. Comma-separated: `123456789,987654321`.
 
-```bash
-# Railway: Variables tab → edit ALLOWED_USER_IDS
-# Fly.io:
-fly secrets set ALLOWED_USER_IDS="123,456,789"
-# Render: Environment tab → edit variable
-```
+## Render Free Tier Notes
 
-Multiple IDs are comma-separated. No restart needed for most platforms (they reload env vars automatically).
-
----
+- Free instances spin down after 15 minutes of inactivity
+- When a user messages the bot, Telegram sends a webhook POST that wakes up the instance
+- First message after idle may take 10-30 seconds while Render boots the instance
+- 750 free hours/month (enough for one always-on service)
+- 512MB RAM limit — sufficient for this bot (downloaded files are capped at 50MB)
 
 ## Troubleshooting
 
+**First message takes 30+ seconds after idle:**
+- This is Render's cold start. Normal for free tier. Subsequent messages are instant.
+
 **Bot doesn't respond:**
-- Check logs on your hosting platform for errors
+- Check Render logs for errors
 - Verify `TELEGRAM_BOT_TOKEN` is correct
 - Verify your user ID is in `ALLOWED_USER_IDS`
+- Check `WEBHOOK_URL` matches your Render URL
 
-**"All sources busy, try again later":**
-- One or more book sites may be temporarily down
-- Try again in a few minutes
-- The bot tries Z-Library → Ocean of PDF → LibGen in sequence
+**Webhook not working:**
+- Check `/health` endpoint works: visit `https://your-url.onrender.com/health`
+- Check Render logs for "Webhook set to..." message
+- You can check current webhook info via Telegram API: `https://api.telegram.org/bot<token>/getWebhookInfo`
 
-**Build fails locally:**
-- Ensure Go 1.21+: `go version`
-- Run `go mod tidy` to fix dependencies
-
-**Rate limited by Telegram:**
-- Telegram limits bots to ~30 messages/second
-- The bot processes one message at a time, so this shouldn't happen with 2-5 users
+**"Source temporarily unavailable":**
+- The book site may have Cloudflare protection
+- Try another source or use the **Get Link** button

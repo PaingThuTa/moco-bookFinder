@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -53,36 +55,98 @@ func main() {
 	// Set up handler
 	handler := bot.NewHandler(cfg, mgr, dlMgr)
 
-	// Configure updates polling
+	webhookURL := os.Getenv("WEBHOOK_URL")
+	if webhookURL != "" {
+		runWebhook(botClient, handler, webhookURL, me.Username)
+	} else {
+		runPolling(botClient, handler)
+	}
+}
+
+func runWebhook(botClient *telego.Bot, handler *bot.BotHandler, webhookURL, botName string) {
 	ctx := context.Background()
+	webhookPath := "/" + botName
+	addr := ":" + os.Getenv("PORT")
+	if os.Getenv("PORT") == "" {
+		addr = ":10000"
+	}
+
+	// Register webhook on Telegram
+	err := botClient.SetWebhook(ctx, &telego.SetWebhookParams{
+		URL: webhookURL + webhookPath,
+	})
+	if err != nil {
+		log.Fatalf("Failed to set webhook: %v", err)
+	}
+	log.Printf("Webhook set to %s%s", webhookURL, webhookPath)
+
+	// Set up update channel from webhook
+	updates, err := botClient.UpdatesViaWebhook(
+		ctx,
+		func(h telego.WebhookHandler) error {
+			return telego.WebhookHTTPServeMux(
+				http.DefaultServeMux,
+				webhookPath,
+			)(h)
+		},
+	)
+	if err != nil {
+		log.Fatalf("Failed to set up webhook: %v", err)
+	}
+
+	// Health check endpoint
+	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("ok"))
+	})
+
+	// Process updates
+	go func() {
+		for update := range updates {
+			processUpdate(botClient, handler, update)
+		}
+	}()
+
+	log.Printf("Starting webhook server on %s", addr)
+	if err := http.ListenAndServe(addr, nil); err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
+}
+
+func runPolling(botClient *telego.Bot, handler *bot.BotHandler) {
+	ctx := context.Background()
+
 	updates, err := botClient.UpdatesViaLongPolling(ctx, nil)
 	if err != nil {
 		log.Fatalf("Failed to get updates: %v", err)
 	}
+	log.Println("Running in polling mode")
 
-	// Process updates
 	for update := range updates {
-		if update.Message != nil {
-			msg := update.Message
-			// Check if message is a command
-			if strings.HasPrefix(msg.Text, "/") {
-				cmd, _, _ := tu.ParseCommand(msg.Text)
-				switch cmd {
-				case "start":
-					handler.HandleStart(botClient, update)
-				case "search":
-					handler.HandleSearch(botClient, update)
-				default:
-					botClient.SendMessage(ctx, &telego.SendMessageParams{
-						ChatID: tu.ID(msg.Chat.ID),
-						Text:   "Unknown command. Use /start to see available commands.",
-					})
-				}
+		processUpdate(botClient, handler, update)
+	}
+}
+
+func processUpdate(botClient *telego.Bot, handler *bot.BotHandler, update telego.Update) {
+	if update.Message != nil {
+		msg := update.Message
+		if strings.HasPrefix(msg.Text, "/") {
+			cmd, _, _ := tu.ParseCommand(msg.Text)
+			switch cmd {
+			case "start":
+				handler.HandleStart(botClient, update)
+			case "search":
+				handler.HandleSearch(botClient, update)
+			default:
+				botClient.SendMessage(context.Background(), &telego.SendMessageParams{
+					ChatID: tu.ID(msg.Chat.ID),
+					Text:   "Unknown command. Use /start to see available commands.",
+				})
 			}
 		}
+	}
 
-		if update.CallbackQuery != nil {
-			handler.HandleCallback(botClient, update)
-		}
+	if update.CallbackQuery != nil {
+		handler.HandleCallback(botClient, update)
 	}
 }

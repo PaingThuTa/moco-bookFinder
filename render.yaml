@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: book-finder-bot
+    env: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: ALLOWED_USER_IDS
+        sync: false

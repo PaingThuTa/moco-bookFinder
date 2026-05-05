@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	"book-finder/internal/bot"
 )
 
 const maxFileSize = 50 * 1024 * 1024 // 50MB Telegram limit
@@ -52,7 +50,7 @@ func (m *SourceManager) DownloadFile(ctx context.Context, sourceName, detailURL 
 		return nil, fmt.Errorf("no downloader for source %q", sourceName)
 	}
 
-	bot.SleepWithDelay()
+	sleepWithDelay()
 	return dl.DownloadFile(ctx, detailURL)
 }
 
@@ -66,7 +64,7 @@ func FetchFile(ctx context.Context, client *http.Client, url string) ([]byte, er
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
-			bot.SleepWithDelay()
+			sleepWithDelay()
 		}
 
 		resp, err := client.Do(req)
@@ -98,7 +96,7 @@ func FetchFile(ctx context.Context, client *http.Client, url string) ([]byte, er
 			return nil, ErrFileTooLarge
 		}
 
-		if bot.IsCloudflareChallenge(string(data)) {
+		if isCloudflareChallenge(string(data)) {
 			return nil, ErrCloudflareBlocked
 		}
 

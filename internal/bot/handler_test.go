@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"book-finder/internal/config"
+	"book-finder/internal/downloader"
 	"book-finder/internal/source"
 )
 
@@ -52,7 +53,7 @@ func TestSearchHandler_ResultsFound(t *testing.T) {
 			{Title: "Test Book", DownloadURL: "https://example.com/1", Source: "test"},
 		},
 	}
-	h := NewHandler(cfg, mgr)
+	h := NewHandler(cfg, mgr, &mockDownloadManager{})
 
 	// parseSearchArgs is the testable unit
 	title, author := h.parseSearchArgs("TestBook --author TestAuthor")
@@ -67,7 +68,7 @@ func TestSearchHandler_ResultsFound(t *testing.T) {
 func TestSearchHandler_EmptyQuery(t *testing.T) {
 	cfg := &config.Config{AllowedUserIDs: map[int64]bool{123: true}}
 	mgr := &mockSourceManager{}
-	h := NewHandler(cfg, mgr)
+	h := NewHandler(cfg, mgr, &mockDownloadManager{})
 
 	title, _ := h.parseSearchArgs("")
 	if title != "" {
@@ -82,4 +83,10 @@ type mockSourceManager struct {
 
 func (m *mockSourceManager) Search(ctx context.Context, title, author string) ([]source.BookResult, error) {
 	return m.results, m.err
+}
+
+type mockDownloadManager struct{}
+
+func (m *mockDownloadManager) DownloadFile(ctx context.Context, sourceName, detailURL string) (*downloader.DownloadedFile, error) {
+	return nil, nil
 }

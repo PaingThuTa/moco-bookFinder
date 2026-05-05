@@ -2,6 +2,7 @@ package bot
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -11,11 +12,16 @@ import (
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 	"book-finder/internal/config"
+	"book-finder/internal/downloader"
 	"book-finder/internal/source"
 )
 
 type SourceManagerInterface interface {
 	Search(ctx context.Context, title, author string) ([]source.BookResult, error)
+}
+
+type DownloadManagerInterface interface {
+	DownloadFile(ctx context.Context, sourceName, detailURL string) (*downloader.DownloadedFile, error)
 }
 
 type storedResults struct {
@@ -26,14 +32,16 @@ type storedResults struct {
 type BotHandler struct {
 	cfg     *config.Config
 	mgr     SourceManagerInterface
+	dlMgr   DownloadManagerInterface
 	results map[int64]*storedResults
 	mu      sync.RWMutex
 }
 
-func NewHandler(cfg *config.Config, mgr SourceManagerInterface) *BotHandler {
+func NewHandler(cfg *config.Config, mgr SourceManagerInterface, dlMgr DownloadManagerInterface) *BotHandler {
 	return &BotHandler{
 		cfg:     cfg,
 		mgr:     mgr,
+		dlMgr:   dlMgr,
 		results: make(map[int64]*storedResults),
 	}
 }
@@ -91,11 +99,11 @@ func (h *BotHandler) HandleSearch(bot *telego.Bot, update telego.Update) {
 		return
 	}
 
-	// Format results with inline keyboard buttons
+	// Format results with inline keyboard buttons (Send File + Get Link per result)
 	var textBuilder strings.Builder
 	textBuilder.WriteString(fmt.Sprintf("Found %d result(s):\n\n", len(results)))
 
-	var buttons []telego.InlineKeyboardButton
+	var buttons [][]telego.InlineKeyboardButton
 	for i, r := range results {
 		textBuilder.WriteString(fmt.Sprintf("%d. **%s**", i+1, r.Title))
 		if r.Author != "" {
@@ -103,26 +111,25 @@ func (h *BotHandler) HandleSearch(bot *telego.Bot, update telego.Update) {
 		}
 		textBuilder.WriteString(fmt.Sprintf("\n   Source: %s\n\n", r.Source))
 
-		btn := telego.InlineKeyboardButton{
-			Text:         fmt.Sprintf("Download: %s", r.Title),
-			CallbackData: fmt.Sprintf("dl_%d", i),
+		fileBtn := telego.InlineKeyboardButton{
+			Text:         "Send File",
+			CallbackData: fmt.Sprintf("dl_file_%d", i),
 		}
-		buttons = append(buttons, btn)
+		linkBtn := telego.InlineKeyboardButton{
+			Text:         "Get Link",
+			CallbackData: fmt.Sprintf("dl_link_%d", i),
+		}
+		buttons = append(buttons, []telego.InlineKeyboardButton{fileBtn, linkBtn})
 	}
 
 	// Store results in memory for callback lookup
 	h.storeResults(update.Message.Chat.ID, results)
 
-	rows := make([][]telego.InlineKeyboardButton, 0, len(buttons))
-	for i := range buttons {
-		rows = append(rows, []telego.InlineKeyboardButton{buttons[i]})
-	}
-
 	textMsg := telego.SendMessageParams{
 		ChatID:      tu.ID(update.Message.Chat.ID),
 		Text:        textBuilder.String(),
 		ParseMode:   "Markdown",
-		ReplyMarkup: tu.InlineKeyboard(rows...),
+		ReplyMarkup: tu.InlineKeyboard(buttons...),
 	}
 
 	bot.SendMessage(context.Background(), &textMsg)
@@ -134,23 +141,37 @@ func (h *BotHandler) HandleCallback(bot *telego.Bot, update telego.Update) {
 	}
 
 	data := update.CallbackQuery.Data
+	chatID := update.CallbackQuery.Message.GetChat().ID
 
 	// Answer callback query to remove loading indicator
 	bot.AnswerCallbackQuery(context.Background(), &telego.AnswerCallbackQueryParams{
 		CallbackQueryID: update.CallbackQuery.ID,
 	})
 
-	if !strings.HasPrefix(data, "dl_") {
+	// Parse callback data
+	var index int
+	var action string
+	switch {
+	case strings.HasPrefix(data, "dl_file_"):
+		action = "file"
+		indexStr := strings.TrimPrefix(data, "dl_file_")
+		idx, err := strconv.Atoi(indexStr)
+		if err != nil {
+			return
+		}
+		index = idx
+	case strings.HasPrefix(data, "dl_link_"):
+		action = "link"
+		indexStr := strings.TrimPrefix(data, "dl_link_")
+		idx, err := strconv.Atoi(indexStr)
+		if err != nil {
+			return
+		}
+		index = idx
+	default:
 		return
 	}
 
-	indexStr := strings.TrimPrefix(data, "dl_")
-	index, err := strconv.Atoi(indexStr)
-	if err != nil {
-		return
-	}
-
-	chatID := update.CallbackQuery.Message.GetChat().ID
 	results := h.getResults(chatID)
 	if results == nil || index < 0 || index >= len(results) {
 		bot.SendMessage(context.Background(), &telego.SendMessageParams{
@@ -161,11 +182,57 @@ func (h *BotHandler) HandleCallback(bot *telego.Bot, update telego.Update) {
 	}
 
 	r := results[index]
-	bot.SendMessage(context.Background(), &telego.SendMessageParams{
-		ChatID:    tu.ID(chatID),
-		Text:      fmt.Sprintf("Download link for **%s**:\n%s", r.Title, r.DownloadURL),
-		ParseMode: "Markdown",
-	})
+
+	if action == "link" {
+		bot.SendMessage(context.Background(), &telego.SendMessageParams{
+			ChatID:    tu.ID(chatID),
+			Text:      fmt.Sprintf("Download link for **%s**:\n%s", r.Title, r.DownloadURL),
+			ParseMode: "Markdown",
+		})
+		return
+	}
+
+	// Action is "file" — show loading message
+	loadingMsg := telego.SendMessageParams{
+		ChatID: tu.ID(chatID),
+		Text:   "Downloading file...",
+	}
+	sentMsg, err := bot.SendMessage(context.Background(), &loadingMsg)
+	if err != nil {
+		return
+	}
+
+	// Perform download
+	file, err := h.dlMgr.DownloadFile(context.Background(), r.Source, r.DetailURL)
+	if err != nil {
+		var msg string
+		switch {
+		case errors.Is(err, downloader.ErrNoFileFound):
+			msg = "Direct download not available for this book. Use the link to download manually."
+		case errors.Is(err, downloader.ErrFileTooLarge):
+			msg = "File too large (>50MB). Use the link to download manually."
+		case errors.Is(err, downloader.ErrCloudflareBlocked):
+			msg = "Source temporarily unavailable. Try another source or use the link."
+		default:
+			msg = "Download failed. Try another source or use the link."
+		}
+
+		editMsg := telego.EditMessageTextParams{
+			ChatID:    tu.ID(chatID),
+			MessageID: sentMsg.MessageID,
+			Text:      msg,
+		}
+		bot.EditMessageText(context.Background(), &editMsg)
+		return
+	}
+
+	// Send the file
+	bot.SendDocument(context.Background(), tu.Document(tu.ID(chatID), tu.FileFromBytes(file.Data, file.Filename)).WithCaption(
+		fmt.Sprintf("%s by %s (%s)", r.Title, r.Author, strings.ToUpper(file.FileType)),
+	))
+
+	// Delete the loading message
+	bot.DeleteMessage(context.Background(), tu.Delete(tu.ID(chatID), sentMsg.MessageID))
 }
 
 func (h *BotHandler) checkAuthorized(bot *telego.Bot, update telego.Update) bool {

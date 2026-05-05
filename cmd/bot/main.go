@@ -33,27 +33,20 @@ func main() {
 	}
 	log.Printf("Authorized on account %s", me.Username)
 
-	// Shared HTTP client with browser headers for scraping and downloads
+	// Shared HTTP client with browser headers for scraping
 	httpClient := downloader.NewHTTPClient(30 * time.Second)
 
 	// Set up scrapers with fallback
 	scrapers := []source.Scraper{
+		source.NewOpenLibraryScraper(httpClient),
 		source.NewZLibraryScraper(httpClient),
 		source.NewOceanPDFScraper(httpClient),
 		source.NewLibGenScraper(httpClient),
 	}
 	mgr := source.NewSourceManager(scrapers)
 
-	// Set up per-source file downloaders
-	fileDownloaders := []downloader.FileDownloader{
-		downloader.NewZLibraryDownloader(httpClient),
-		downloader.NewOceanPDFDownloader(httpClient),
-		downloader.NewLibGenDownloader(httpClient),
-	}
-	dlMgr := downloader.NewSourceManager(fileDownloaders, httpClient)
-
 	// Set up handler
-	handler := bot.NewHandler(cfg, mgr, dlMgr)
+	handler := bot.NewHandler(cfg, mgr)
 
 	webhookURL := os.Getenv("WEBHOOK_URL")
 	if webhookURL != "" {
@@ -115,6 +108,11 @@ func runWebhook(botClient *telego.Bot, handler *bot.BotHandler, webhookURL, botN
 
 func runPolling(botClient *telego.Bot, handler *bot.BotHandler) {
 	ctx := context.Background()
+
+	// Delete any existing webhook so polling can work
+	if err := botClient.DeleteWebhook(ctx, &telego.DeleteWebhookParams{}); err != nil {
+		log.Printf("Failed to delete webhook: %v", err)
+	}
 
 	updates, err := botClient.UpdatesViaLongPolling(ctx, nil)
 	if err != nil {

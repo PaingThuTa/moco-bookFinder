@@ -1,8 +1,10 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -50,7 +52,16 @@ func (s *OceanPDFScraper) Search(ctx context.Context, title, author string) ([]B
 		return nil, fmt.Errorf("Ocean of PDF returned status %d", resp.StatusCode)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Ocean of PDF response body: %w", err)
+	}
+
+	if isCloudflareChallenge(string(data)) {
+		return nil, fmt.Errorf("Ocean of PDF blocked by Cloudflare")
+	}
+
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}

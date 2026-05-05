@@ -1,8 +1,10 @@
 package source
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -50,7 +52,16 @@ func (s *ZLibraryScraper) Search(ctx context.Context, title, author string) ([]B
 		return nil, fmt.Errorf("Z-Library returned status %d", resp.StatusCode)
 	}
 
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read Z-Library response body: %w", err)
+	}
+
+	if isCloudflareChallenge(string(data)) {
+		return nil, fmt.Errorf("Z-Library blocked by Cloudflare")
+	}
+
+	doc, err := goquery.NewDocumentFromReader(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}

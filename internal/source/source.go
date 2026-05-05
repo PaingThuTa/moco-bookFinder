@@ -31,12 +31,22 @@ func (m *SourceManager) HTTPClient() *http.Client {
 }
 
 func (m *SourceManager) Search(ctx context.Context, title, author string) ([]BookResult, error) {
+	var allResults []BookResult
+
 	for _, scraper := range m.scrapers {
 		results, err := scraper.Search(ctx, title, author)
-		if err == nil && len(results) > 0 {
-			return results, nil
+		if err != nil {
+			// Log the error but try next source
+			continue
 		}
-		// Try next source
+		if len(results) > 0 {
+			allResults = append(allResults, results...)
+		}
 	}
-	return nil, fmt.Errorf("all sources failed")
+
+	if len(allResults) == 0 {
+		return nil, fmt.Errorf("all sources failed")
+	}
+
+	return allResults, nil
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
 	"strings"
 	"time"
 
@@ -11,6 +10,7 @@ import (
 	tu "github.com/mymmrac/telego/telegoutil"
 	"book-finder/internal/bot"
 	"book-finder/internal/config"
+	"book-finder/internal/downloader"
 	"book-finder/internal/source"
 )
 
@@ -31,10 +31,8 @@ func main() {
 	}
 	log.Printf("Authorized on account %s", me.Username)
 
-	// Shared HTTP client for scrapers
-	httpClient := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	// Shared HTTP client with browser headers for scraping and downloads
+	httpClient := downloader.NewHTTPClient(30 * time.Second)
 
 	// Set up scrapers with fallback
 	scrapers := []source.Scraper{
@@ -44,8 +42,16 @@ func main() {
 	}
 	mgr := source.NewSourceManager(scrapers)
 
+	// Set up per-source file downloaders
+	fileDownloaders := []downloader.FileDownloader{
+		downloader.NewZLibraryDownloader(httpClient),
+		downloader.NewOceanPDFDownloader(httpClient),
+		downloader.NewLibGenDownloader(httpClient),
+	}
+	dlMgr := downloader.NewSourceManager(fileDownloaders, httpClient)
+
 	// Set up handler
-	handler := bot.NewHandler(cfg, mgr)
+	handler := bot.NewHandler(cfg, mgr, dlMgr)
 
 	// Configure updates polling
 	ctx := context.Background()

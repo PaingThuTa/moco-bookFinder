@@ -8,7 +8,8 @@ import (
 type BookResult struct {
 	Title       string
 	Author      string
-	DownloadURL string
+	DetailURL   string // URL to book detail page for file resolution
+	DownloadURL string // Direct download link or search result link
 	Source      string // "Z-Library", "Ocean of PDF", "LibGen"
 }
 

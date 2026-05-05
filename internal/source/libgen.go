@@ -91,6 +91,7 @@ func (s *LibGenScraper) Search(ctx context.Context, title, author string) ([]Boo
 		results = append(results, BookResult{
 			Title:       bookTitle,
 			Author:      author,
+			DetailURL:   href,
 			DownloadURL: href,
 			Source:      "LibGen",
 		})

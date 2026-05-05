@@ -70,6 +70,7 @@ func (s *OceanPDFScraper) Search(ctx context.Context, title, author string) ([]B
 			results = append(results, BookResult{
 				Title:       bookTitle,
 				Author:      "",
+				DetailURL:   href,
 				DownloadURL: href,
 				Source:      "Ocean of PDF",
 			})

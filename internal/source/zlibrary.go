@@ -81,6 +81,7 @@ func (s *ZLibraryScraper) Search(ctx context.Context, title, author string) ([]B
 			results = append(results, BookResult{
 				Title:       bookTitle,
 				Author:      auth,
+				DetailURL:   href,
 				DownloadURL: href,
 				Source:      "Z-Library",
 			})
@@ -99,6 +100,7 @@ func (s *ZLibraryScraper) Search(ctx context.Context, title, author string) ([]B
 				results = append(results, BookResult{
 					Title:       title,
 					Author:      "",
+					DetailURL:   resolveURL(s.base, href),
 					DownloadURL: resolveURL(s.base, href),
 					Source:      "Z-Library",
 				})
